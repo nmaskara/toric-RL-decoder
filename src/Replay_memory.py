@@ -2,7 +2,7 @@ import numpy
 from collections import namedtuple
 import random
 import _pickle as cPickle
-from .sum_tree import Sum_tree
+from sum_tree import Sum_tree
 
 
 Transition = namedtuple('Transition',

@@ -12,14 +12,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 # import from other files
-from .toric_model import Toric_code
-from .toric_model import Action
-from .toric_model import Perspective
-from .Replay_memory import Replay_memory_uniform, Replay_memory_prioritized
+from toric_model import Toric_code
+from toric_model import Action
+from toric_model import Perspective
+from Replay_memory import Replay_memory_uniform, Replay_memory_prioritized
 # import networks 
 from NN import NN_11, NN_17
 from ResNet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
-from .util import incremental_mean, convert_from_np_to_tensor, Transition
+from util import incremental_mean, convert_from_np_to_tensor, Transition
 
 
 class RL():
@@ -52,9 +52,11 @@ class RL():
             self.policy_net = self.network()
         else:
             self.policy_net = self.network(system_size, number_of_actions, device)
+
         self.target_net = deepcopy(self.policy_net)
         self.policy_net = self.policy_net.to(self.device)
         self.target_net = self.target_net.to(self.device)
+
         self.learning_rate = learning_rate
         # hyperparameters RL
         self.discount_factor = discount_factor
@@ -75,34 +77,46 @@ class RL():
     def experience_replay(self, criterion, optimizer, batch_size):
         self.policy_net.train()
         self.target_net.eval()
+
         # get transitions and unpack them to minibatch
         transitions, weights, indices = self.memory.sample(batch_size, 0.4) # beta parameter 
         mini_batch = Transition(*zip(*transitions))
+
         # unpack action batch
         batch_actions = Action(*zip(*mini_batch.action))
         batch_actions = np.array(batch_actions.action) - 1
         batch_actions = torch.Tensor(batch_actions).long()
         batch_actions = batch_actions.to(self.device)
+
         # preprocess batch_input and batch_target_input for the network
         batch_state = self.get_batch_input(mini_batch.state)
         batch_next_state = self.get_batch_input(mini_batch.next_state)
+
         # preprocess batch_terminal and batch reward
         batch_terminal = convert_from_np_to_tensor(np.array(mini_batch.terminal)) 
         batch_terminal = batch_terminal.to(self.device)
+
         batch_reward = convert_from_np_to_tensor(np.array(mini_batch.reward))
         batch_reward = batch_reward.to(self.device)
+
         # compute policy net output
         output = self.policy_net(batch_state)
         output = output.gather(1, batch_actions.view(-1, 1)).squeeze(1)    
+
         # compute target network output 
         target_output = self.get_target_network_output(batch_next_state, batch_size)
         target_output = target_output.to(self.device)
+
         y = batch_reward + (batch_terminal * self.discount_factor * target_output)
+
         # compute loss and update replay memory
         loss = self.get_loss(criterion, optimizer, y, output, weights, indices)
+
         # backpropagate loss
         loss.backward()
         optimizer.step()
+
+        return loss
 
 
     def get_loss(self, criterion, optimizer, y, output, weights, indices):
@@ -190,6 +204,8 @@ class RL():
         epsilon_update = num_of_steps * reach_final_epsilon
         # main loop over training steps 
         while iteration < training_steps:
+            iteration += 1
+
             num_of_steps_per_episode = 0
             # initialize syndrom
             self.toric = Toric_code(self.system_size)
@@ -200,13 +216,17 @@ class RL():
                     self.toric.generate_random_error(self.p_error)
                 else:
                     self.toric.generate_n_random_errors(minimum_nbr_of_qubit_errors)
+
+                    self.toric.generate_single_bitflip()
+                
                 terminal_state = self.toric.terminal_state(self.toric.current_state)
+
             # solve one episode
-            while terminal_state == 1 and num_of_steps_per_episode < self.max_nbr_actions_per_episode and iteration < training_steps:
+            while terminal_state == 1 and num_of_steps_per_episode < self.max_nbr_actions_per_episode:# and iteration < training_steps:
                 num_of_steps_per_episode += 1
                 num_of_epsilon_steps += 1
                 steps_counter += 1
-                iteration += 1
+                
                 # select action using epsilon greedy policy
                 action = self.select_action(number_of_actions=self.number_of_actions,
                                             epsilon=epsilon, 
@@ -222,9 +242,10 @@ class RL():
                 # experience replay
                 if steps_counter > replay_start_size:
                     update_counter += 1
-                    self.experience_replay(criterion,
+                    loss = self.experience_replay(criterion,
                                             optimizer,
                                             batch_size)
+                    #print("loss=, ", loss)
                 # set target_net to policy_net
                 if update_counter % target_update == 0:
                     self.target_net = deepcopy(self.policy_net)
@@ -413,12 +434,17 @@ class RL():
                     replay_start_size=replay_start_size,
                     minimum_nbr_of_qubit_errors=minimum_nbr_of_qubit_errors)
             print('training done, epoch: ', i+1)
+            #print("training done repeat")
             # evaluate network
-            error_corrected_list, ground_state_list, average_number_of_steps_list, mean_q_list, failed_syndroms, ground_state_list, prediction_list_p_error, failure_rate = self.prediction(num_of_predictions=num_of_predictions, 
-                                                                                                                                                                        prediction_list_p_error=prediction_list_p_error, 
-                                                                                                                                                                        minimum_nbr_of_qubit_errors=int(self.system_size/2)+1,
-                                                                                                                                                                        save_prediction=True,
-                                                                                                                                                                        num_of_steps=num_of_steps_prediction)
+            ( error_corrected_list, ground_state_list, average_number_of_steps_list, 
+            mean_q_list, failed_syndroms, ground_state_list, prediction_list_p_error, 
+            failure_rate) = self.prediction(num_of_predictions=num_of_predictions, 
+                prediction_list_p_error=prediction_list_p_error, 
+                minimum_nbr_of_qubit_errors=int(self.system_size/2)+1,
+                save_prediction=True,
+                num_of_steps=num_of_steps_prediction)
+
+            print(error_corrected_list)
 
             data_all = np.append(data_all, np.array([[self.system_size, self.network_name, i+1, self.replay_memory, self.device, self.learning_rate, target_update, optimizer,
                 self.discount_factor, training_steps * (i+1), mean_q_list[0], prediction_list_p_error[0], num_of_predictions, len(failed_syndroms)/2, error_corrected_list[0], ground_state_list[0], average_number_of_steps_list[0],failure_rate, self.p_error]]), axis=0)

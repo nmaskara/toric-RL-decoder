@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from random import uniform, randint
 from collections import namedtuple
-from .util import Action, Perspective
+from util import Action, Perspective
 
 
 class Toric_code():
@@ -24,6 +24,7 @@ class Toric_code():
     def generate_random_error(self, p_error):
         for i in range(2):
             qubits = np.random.uniform(0, 1, size=(self.system_size, self.system_size))
+            # error <-> no_error mixed up
             error = qubits > p_error
             no_error = qubits < p_error
             qubits[error] = 0
